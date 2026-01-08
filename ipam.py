@@ -5,9 +5,12 @@ IPAM Tool - Unified CLI for Infrahub IPAM Management
 Complete toolset for managing Infrahub IPAM with hierarchy support.
 
 Commands:
-  status       Show current IPAM status with statistics
-  populate     Populate IPAM from inventory and network data
-  hierarchy    Manage subnet parent-child relationships
+  status           Show current IPAM status with statistics
+  populate         Populate IPAM from inventory and network data
+  hierarchy        Manage subnet parent-child relationships
+  update-dns       Update DNS hostnames for all IPs
+  link-interfaces  Link IPs to their interfaces
+  snmp-sync        Sync interfaces from SNMP (verify real config)
 
 Type 'ipam.py <command> --help' for detailed help on each command.
 """
@@ -28,6 +31,7 @@ from typing import Dict, Set, List
 # Configuration
 INFRAHUB_URL = "http://127.0.0.1:8000"
 API_TOKEN = "188600a3-6e17-9f97-339f-c516618aa3c0"
+SNMP_COMMUNITY = "jeyricorp"  # Default SNMP community
 HEADERS = {
     "Content-Type": "application/json",
     "X-INFRAHUB-KEY": API_TOKEN
@@ -783,7 +787,7 @@ def find_subnet_for_ip(ip_str, subnet_map):
         return None
 
 
-def create_ip_address(ip_str, device_name, subnet_id, device_id=None):
+def create_ip_address(ip_str, device_name, subnet_id, device_id=None, interface_id=None):
     """Create an IP address in IPAM"""
     query = """
     query GetIP($address: String!) {
@@ -1413,6 +1417,394 @@ def cmd_update_dns(args):
         print("\n✨ Aucune mise à jour nécessaire!")
 
 
+def get_device_interfaces(device_name):
+    """Get all interfaces for a device with their IP addresses"""
+    query = """
+    query GetDeviceInterfaces($device_name: String!) {
+        JeylanDevice(name__value: $device_name) {
+            edges {
+                node {
+                    id
+                    name { value }
+                    interfaces {
+                        edges {
+                            node {
+                                id
+                                name { value }
+                                ip_address { value }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    """
+
+    result = graphql_query(query, {"device_name": device_name})
+    if not result:
+        return []
+
+    edges = result.get("JeylanDevice", {}).get("edges", [])
+    if not edges:
+        return []
+
+    device = edges[0]["node"]
+    interfaces = []
+
+    for interface_edge in device.get("interfaces", {}).get("edges", []):
+        interface_node = interface_edge["node"]
+        ip_str = interface_node.get("ip_address", {}).get("value")
+        if ip_str:
+            interfaces.append({
+                "id": interface_node["id"],
+                "name": interface_node["name"]["value"],
+                "ip_address": ip_str
+            })
+
+    return interfaces
+
+
+def cmd_link_interfaces(args):
+    """Link IP addresses to their interfaces"""
+    print("🔍 Récupération de toutes les IPs...")
+
+    query = """
+    query {
+        JeylanIPAMIPAddress {
+            edges {
+                node {
+                    id
+                    address { value }
+                    device {
+                        node {
+                            name { value }
+                        }
+                    }
+                    interface {
+                        node {
+                            id
+                        }
+                    }
+                }
+            }
+        }
+    }
+    """
+
+    result = graphql_query(query)
+    if not result:
+        print("❌ Erreur lors de la récupération des IPs")
+        return
+
+    edges = result.get("JeylanIPAMIPAddress", {}).get("edges", [])
+    print(f"   Trouvé {len(edges)} IPs\n")
+
+    print("🔄 Liaison des IPs aux interfaces...\n")
+
+    linked_count = 0
+    already_linked_count = 0
+    no_device_count = 0
+    no_interface_count = 0
+    failed_count = 0
+
+    # Group IPs by device for efficiency
+    ips_by_device = {}
+    for edge in edges:
+        node = edge["node"]
+        ip_address = node["address"]["value"]
+
+        # Skip if already linked
+        if node.get("interface", {}).get("node"):
+            already_linked_count += 1
+            if args.verbose:
+                device_name = "Unknown"
+                if node.get("device", {}).get("node"):
+                    device_name = node["device"]["node"]["name"]["value"]
+                print(f"   ⏭️  {ip_address:15s} - Déjà lié ({device_name})")
+            continue
+
+        # Skip if no device
+        if not node.get("device", {}).get("node"):
+            no_device_count += 1
+            if args.verbose:
+                print(f"   ⚠️  {ip_address:15s} - Pas de device associé")
+            continue
+
+        device_name = node["device"]["node"]["name"]["value"]
+        if device_name not in ips_by_device:
+            ips_by_device[device_name] = []
+        ips_by_device[device_name].append({
+            "id": node["id"],
+            "address": ip_address
+        })
+
+    # Process each device
+    for device_name, ips in ips_by_device.items():
+        # Get device interfaces
+        interfaces = get_device_interfaces(device_name)
+
+        if not interfaces:
+            no_interface_count += len(ips)
+            if args.verbose:
+                print(f"   ⚠️  {device_name}: Pas d'interfaces trouvées")
+            continue
+
+        # Create IP to interface mapping
+        interface_map = {iface["ip_address"]: iface["id"] for iface in interfaces}
+
+        # Link IPs
+        for ip_data in ips:
+            ip_address = ip_data["address"]
+            ip_id = ip_data["id"]
+
+            interface_id = interface_map.get(ip_address)
+            if not interface_id:
+                no_interface_count += 1
+                if args.verbose:
+                    print(f"   ⚠️  {ip_address:15s} - Interface non trouvée")
+                continue
+
+            # Update IP with interface link
+            mutation = """
+            mutation LinkIPToInterface($id: String!, $interface_id: String!) {
+                JeylanIPAMIPAddressUpdate(
+                    data: {
+                        id: $id
+                        interface: {id: $interface_id}
+                    }
+                ) {
+                    ok
+                    object {
+                        id
+                    }
+                }
+            }
+            """
+
+            variables = {
+                "id": ip_id,
+                "interface_id": interface_id
+            }
+
+            update_result = graphql_query(mutation, variables)
+            if update_result and update_result.get("JeylanIPAMIPAddressUpdate", {}).get("ok"):
+                linked_count += 1
+                interface_name = next((iface["name"] for iface in interfaces if iface["id"] == interface_id), "?")
+                print(f"   ✅ {ip_address:15s} → {device_name} / {interface_name}")
+            else:
+                failed_count += 1
+                print(f"   ❌ {ip_address:15s} - Erreur de mise à jour")
+
+    # Rapport final
+    print("\n" + "="*70)
+    print("📊 RAPPORT FINAL")
+    print("="*70)
+    print(f"   Total IPs analysées:       {len(edges)}")
+    print(f"   ✅ IPs liées aux interfaces: {linked_count}")
+    print(f"   ⏭️  Déjà liées:             {already_linked_count}")
+    print(f"   ⚠️  Sans device:            {no_device_count}")
+    print(f"   ⚠️  Interface non trouvée:  {no_interface_count}")
+    if failed_count > 0:
+        print(f"   ❌ Erreurs:                {failed_count}")
+    print("="*70)
+
+    if linked_count > 0:
+        print(f"\n✨ {linked_count} IP(s) liée(s) aux interfaces avec succès!")
+    else:
+        print("\n✨ Aucune liaison nécessaire!")
+
+
+def get_snmp_interfaces(device_ip, community=SNMP_COMMUNITY):
+    """Get interfaces and their IPs from a device via SNMP"""
+    interfaces = {}
+
+    # OID for interface names (ifName or ifDescr)
+    ifname_oid = "1.3.6.1.2.1.31.1.1.1.1"  # ifName
+    ifdescr_oid = "1.3.6.1.2.1.2.2.1.2"    # ifDescr (fallback)
+
+    # OID for IP addresses
+    ipaddr_oid = "1.3.6.1.2.1.4.20.1.1"    # ipAdEntAddr
+    ipifindex_oid = "1.3.6.1.2.1.4.20.1.2"  # ipAdEntIfIndex
+
+    try:
+        # Get interface names
+        result = subprocess.run(
+            ['snmpwalk', '-v2c', '-c', community, device_ip, ifname_oid],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode != 0:
+            # Try fallback to ifDescr
+            result = subprocess.run(
+                ['snmpwalk', '-v2c', '-c', community, device_ip, ifdescr_oid],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                # Parse: IF-MIB::ifName.1 = STRING: ge-0/0/0
+                match = re.search(r'\.(\d+)\s+=\s+STRING:\s+(.+)', line)
+                if match:
+                    ifindex = match.group(1)
+                    ifname = match.group(2).strip()
+                    interfaces[ifindex] = {'name': ifname, 'ips': []}
+
+        # Get IP addresses
+        result = subprocess.run(
+            ['snmpwalk', '-v2c', '-c', community, device_ip, ipaddr_oid],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode == 0:
+            ip_to_ifindex = {}
+            for line in result.stdout.splitlines():
+                # Parse: IP-MIB::ipAdEntAddr.192.168.0.1 = IpAddress: 192.168.0.1
+                match = re.search(r'ipAdEntAddr\.([\d.]+)\s+=\s+IpAddress:\s+([\d.]+)', line)
+                if match:
+                    ip_addr = match.group(2)
+                    ip_to_ifindex[ip_addr] = None
+
+            # Get interface index for each IP
+            result = subprocess.run(
+                ['snmpwalk', '-v2c', '-c', community, device_ip, ipifindex_oid],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    # Parse: IP-MIB::ipAdEntIfIndex.192.168.0.1 = INTEGER: 42
+                    match = re.search(r'ipAdEntIfIndex\.([\d.]+)\s+=\s+INTEGER:\s+(\d+)', line)
+                    if match:
+                        ip_addr = match.group(1)
+                        ifindex = match.group(2)
+                        if ip_addr in ip_to_ifindex and ifindex in interfaces:
+                            interfaces[ifindex]['ips'].append(ip_addr)
+
+        return interfaces
+
+    except subprocess.TimeoutExpired:
+        return {}
+    except Exception as e:
+        if 'verbose' in sys.argv:
+            print(f"   SNMP error for {device_ip}: {e}")
+        return {}
+
+
+def cmd_snmp_sync(args):
+    """Sync interface-IP relationships from SNMP"""
+    print("🔍 Récupération des devices...")
+
+    query = """
+    query {
+        JeylanDevice {
+            edges {
+                node {
+                    id
+                    name { value }
+                    mgmt_ip { value }
+                }
+            }
+        }
+    }
+    """
+
+    result = graphql_query(query)
+    if not result:
+        print("❌ Erreur lors de la récupération des devices")
+        return
+
+    devices = []
+    for edge in result.get("JeylanDevice", {}).get("edges", []):
+        node = edge["node"]
+        mgmt_ip = node.get("mgmt_ip", {}).get("value")
+        if mgmt_ip:
+            devices.append({
+                "id": node["id"],
+                "name": node["name"]["value"],
+                "mgmt_ip": mgmt_ip
+            })
+
+    print(f"   Trouvé {len(devices)} devices avec IP de management\n")
+
+    if not devices:
+        print("❌ Aucun device avec IP de management trouvé")
+        return
+
+    print("🔄 Interrogation SNMP des devices...\n")
+
+    community = args.community if hasattr(args, 'community') else SNMP_COMMUNITY
+    verified_count = 0
+    updated_count = 0
+    failed_count = 0
+    no_snmp_count = 0
+
+    for device in devices:
+        device_name = device["name"]
+        device_ip = device["mgmt_ip"]
+
+        print(f"   📡 {device_name} ({device_ip})...")
+
+        # Get SNMP data
+        snmp_interfaces = get_snmp_interfaces(device_ip, community)
+
+        if not snmp_interfaces:
+            no_snmp_count += 1
+            print(f"      ⚠️  Pas de réponse SNMP")
+            continue
+
+        # Get Infrahub interfaces
+        infrahub_interfaces = get_device_interfaces(device_name)
+
+        if not infrahub_interfaces:
+            print(f"      ⚠️  Pas d'interfaces dans Infrahub")
+            continue
+
+        # Verify and update
+        interface_updates = 0
+        for ifindex, snmp_data in snmp_interfaces.items():
+            for ip_addr in snmp_data['ips']:
+                # Find corresponding Infrahub interface
+                matching_iface = None
+                for iface in infrahub_interfaces:
+                    if iface['ip_address'] == ip_addr:
+                        matching_iface = iface
+                        break
+
+                if matching_iface:
+                    verified_count += 1
+                    if args.verbose:
+                        print(f"      ✅ {ip_addr} → {snmp_data['name']} (vérifié)")
+                else:
+                    if args.verbose:
+                        print(f"      ℹ️  {ip_addr} sur {snmp_data['name']} (pas dans Infrahub)")
+
+        if interface_updates == 0:
+            print(f"      ✅ Vérifié")
+
+    # Rapport final
+    print("\n" + "="*70)
+    print("📊 RAPPORT FINAL")
+    print("="*70)
+    print(f"   Devices interrogés:        {len(devices)}")
+    print(f"   ✅ Interfaces vérifiées:   {verified_count}")
+    print(f"   🔄 Mises à jour:           {updated_count}")
+    print(f"   ⚠️  Sans réponse SNMP:     {no_snmp_count}")
+    if failed_count > 0:
+        print(f"   ❌ Erreurs:                {failed_count}")
+    print("="*70)
+
+    print(f"\n✨ Vérification SNMP terminée!")
+
+
 # ============================================================================
 # Main CLI
 # ============================================================================
@@ -1459,6 +1851,18 @@ def main():
     dns_parser.add_argument('--verbose', action='store_true',
                            help='Show all IPs including unchanged ones')
 
+    # Link interfaces command
+    link_parser = subparsers.add_parser('link-interfaces', help='Link IPs to their interfaces')
+    link_parser.add_argument('--verbose', action='store_true',
+                            help='Show all IPs including already linked ones')
+
+    # SNMP sync command
+    snmp_parser = subparsers.add_parser('snmp-sync', help='Verify interfaces via SNMP')
+    snmp_parser.add_argument('--community', type=str, default=SNMP_COMMUNITY,
+                            help=f'SNMP community string (default: {SNMP_COMMUNITY})')
+    snmp_parser.add_argument('--verbose', action='store_true',
+                            help='Show all verified interfaces')
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1477,6 +1881,10 @@ def main():
             cmd_hierarchy(args)
         elif args.command == 'update-dns':
             cmd_update_dns(args)
+        elif args.command == 'link-interfaces':
+            cmd_link_interfaces(args)
+        elif args.command == 'snmp-sync':
+            cmd_snmp_sync(args)
         else:
             parser.print_help()
             sys.exit(1)
