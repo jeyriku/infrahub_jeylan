@@ -1,0 +1,448 @@
+# yaml-language-server: $schema=https://schema.infrahub.app/infrahub/schema/latest.json
+---
+version: "1.0"
+
+nodes:
+  - name: Device
+    namespace: Jeylan
+    label: "Device"
+    include_in_menu: true
+    display_label: "{{ name__value }}"
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+      - name: mgmt_ip
+        kind: Text
+        optional: true
+      - name: serial_number
+        kind: Text
+        optional: true
+      - name: asset_tag
+        kind: Text
+        optional: true
+      - name: purchase_date
+        kind: DateTime
+        optional: true
+      - name: warranty_expiration
+        kind: DateTime
+        optional: true
+      - name: status
+        kind: Text
+        optional: true
+      - name: interfaces_count
+        kind: Number
+        optional: true
+    relationships:
+      - name: model
+        peer: JeylanModel
+        kind: Parent
+        label: "Model"
+        identifier: "device__model"
+        cardinality: one
+        optional: false
+      - name: manufacturer
+        peer: JeylanManufacturer
+        kind: Component
+        label: "Manufacturer"
+        identifier: "device__manufacturer"
+        cardinality: one
+        optional: true
+      - name: osversion
+        peer: JeylanOSVersion
+        kind: Component
+        label: "OS Version"
+        identifier: "device__osversion"
+        cardinality: one
+        optional: true
+      - name: location_ref
+        peer: JeylanLocation
+        kind: Component
+        label: "Location"
+        identifier: "device__location"
+        cardinality: one
+        optional: true
+      - name: type
+        peer: JeylanDeviceType
+        kind: Component
+        label: "Device Type"
+        identifier: "device__devicetype"
+        cardinality: one
+        optional: true
+      - name: role
+        peer: JeylanDeviceRole
+        kind: Component
+        label: "Role"
+        identifier: "device__role"
+        cardinality: one
+        optional: true
+      - name: interfaces
+        peer: JeylanInterfaces
+        kind: Component
+        label: "Interfaces"
+        identifier: "device__interfaces"
+        cardinality: many
+        optional: true
+      - name: ip_addresses
+        peer: JeylanIPAMIPAddress
+        kind: Generic
+        label: "IP Addresses"
+        identifier: "device__ipaddress"
+        cardinality: many
+        optional: true
+
+  - name: Model
+    namespace: Jeylan
+    label: "Model"
+    include_in_menu: true
+    display_label: "{{ name__value }}"
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+      - name: vendor
+        kind: Text
+        optional: true
+
+  - name: Interfaces
+    namespace: Jeylan
+    label: "Interfaces"
+    include_in_menu: true
+    display_label: "{{ name__value }}"
+    attributes:
+      - name: name
+        kind: Text
+      - name: enabled
+        kind: Boolean
+        default_value: true
+      - name: speed
+        kind: Number
+        optional: true
+      - name: mac_address
+        kind: Text
+        optional: true
+      - name: ip_address
+        kind: Text
+        optional: true
+      - name: mtu
+        kind: Number
+        optional: true
+      - name: description
+        kind: Text
+        optional: true
+      - name: status
+        kind: Text
+        optional: true
+      - name: device_name
+        kind: Text
+        optional: true
+    relationships:
+      - name: device
+        peer: JeylanDevice
+        kind: Generic
+        label: "Device"
+        identifier: "device__interfaces"
+        cardinality: one
+        optional: true
+      - name: ip_addresses
+        peer: JeylanIPAMIPAddress
+        kind: Generic
+        label: "IP Addresses"
+        identifier: "interface__ipaddress"
+        cardinality: many
+        optional: true
+
+  - name: Manufacturer
+    namespace: Jeylan
+    label: "Manufacturer"
+    include_in_menu: true
+    display_label: "{{ name__value }}"
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+      - name: website
+        kind: Text
+        optional: true
+      - name: country
+        kind: Text
+        optional: true
+    relationships:
+      - name: devices
+        peer: JeylanDevice
+        kind: Generic
+        label: "Devices"
+        identifier: "device__manufacturer"
+        cardinality: many
+        optional: true
+
+  - name: OSVersion
+    namespace: Jeylan
+    label: "OS Version"
+    include_in_menu: true
+    display_label: "{{ name__value }}"
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+      - name: os_family
+        kind: Text
+        optional: true
+    relationships:
+      - name: manufacturer
+        peer: JeylanManufacturer
+        kind: Component
+        label: "Manufacturer"
+        identifier: "osversion__manufacturer"
+        cardinality: one
+        optional: true
+      - name: devices
+        peer: JeylanDevice
+        kind: Generic
+        label: "Devices"
+        identifier: "device__osversion"
+        cardinality: many
+        optional: true
+
+  - name: IPAMPrefix
+    namespace: Jeylan
+    label: "IPAM Prefix (Supernet)"
+    include_in_menu: false
+    menu_placement: "JeylanIPAM"
+    display_label: "{{ prefix__value }} - {{ description__value }}"
+    attributes:
+      - name: prefix
+        kind: Text
+        unique: true
+        description: "Supernet prefix (e.g., 10.0.0.0/8, 192.168.0.0/16)"
+      - name: description
+        kind: Text
+        optional: true
+      - name: status
+        kind: Text
+        optional: true
+        default_value: "active"
+    relationships:
+      - name: subnets
+        peer: JeylanIPAMSubnet
+        kind: Component
+        label: "Subnets"
+        identifier: "prefix__subnets"
+        cardinality: many
+        optional: true
+
+  - name: IPAMSubnet
+    namespace: Jeylan
+    label: "IPAM Subnet"
+    include_in_menu: false
+    menu_placement: "JeylanIPAM"
+    display_label: "{{ subnet__value }} - {{ name__value }}"
+    attributes:
+      - name: subnet
+        kind: Text
+        unique: true
+        description: "Subnet prefix (e.g., 192.168.0.0/24)"
+      - name: name
+        kind: Text
+        description: "Subnet name (e.g., jeylan1, jeylan2)"
+      - name: description
+        kind: Text
+        optional: true
+      - name: vlan_id
+        kind: Number
+        optional: true
+      - name: status
+        kind: Text
+        optional: true
+        default_value: "active"
+      - name: utilization
+        kind: Number
+        optional: true
+        description: "Percentage of IP addresses allocated (0-100)"
+      - name: subnet_type
+        kind: Dropdown
+        choices:
+          - name: parent
+            label: Parent
+            description: "Parent subnet (/24, /16, /8)"
+            color: "#3b82f6"
+          - name: child
+            label: Child
+            description: "Child subnet (/30, /29)"
+            color: "#8b5cf6"
+        optional: true
+        default_value: "parent"
+    relationships:
+      - name: prefix
+        peer: JeylanIPAMPrefix
+        kind: Generic
+        label: "Parent Prefix"
+        identifier: "prefix__subnets"
+        cardinality: one
+        optional: true
+      - name: location
+        peer: JeylanLocation
+        kind: Component
+        label: "Location"
+        identifier: "subnet__location"
+        cardinality: one
+        optional: true
+      - name: ip_addresses
+        peer: JeylanIPAMIPAddress
+        kind: Component
+        label: "IP Addresses"
+        identifier: "subnet__ipaddresses"
+        cardinality: many
+        optional: true
+      - name: parent_subnet
+        peer: JeylanIPAMSubnet
+        kind: Generic
+        label: "Parent Subnet"
+        identifier: "subnet__has_parent"
+        cardinality: one
+        optional: true
+      - name: child_subnets
+        peer: JeylanIPAMSubnet
+        kind: Generic
+        label: "Child Subnets"
+        identifier: "subnet__has_children"
+        cardinality: many
+        optional: true
+
+  - name: IPAMIPAddress
+    namespace: Jeylan
+    label: "IPAM IP Address"
+    include_in_menu: false
+    menu_placement: "JeylanIPAM"
+    display_label: "{{ address__value }}"
+    attributes:
+      - name: address
+        kind: Text
+        unique: true
+        description: "IP address (e.g., 192.168.0.1)"
+      - name: description
+        kind: Text
+        optional: true
+      - name: status
+        kind: Text
+        optional: true
+        default_value: "active"
+    relationships:
+      - name: subnet
+        peer: JeylanIPAMSubnet
+        kind: Generic
+        label: "Subnet"
+        identifier: "subnet__ipaddresses"
+        cardinality: one
+        optional: true
+      - name: interface
+        peer: JeylanInterfaces
+        kind: Generic
+        label: "Interface"
+        identifier: "interface__ipaddress"
+        cardinality: one
+        optional: true
+      - name: device
+        peer: JeylanDevice
+        kind: Generic
+        label: "Device"
+        identifier: "device__ipaddress"
+        cardinality: one
+        optional: true
+
+  - name: Location
+    namespace: Jeylan
+    label: "Location"
+    include_in_menu: true
+    display_label: "{{ name__value }}"
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+      - name: address
+        kind: Text
+        optional: true
+      - name: timezone
+        kind: Text
+        optional: true
+      - name: country
+        kind: Text
+        optional: true
+    relationships:
+      - name: devices
+        peer: JeylanDevice
+        kind: Generic
+        label: "Devices"
+        identifier: "device__location"
+        cardinality: many
+        optional: true
+
+  - name: Routing
+    namespace: Jeylan
+    label: "Routing"
+    include_in_menu: true
+    display_label: "{{ protocol__value }}"
+    attributes:
+      - name: protocol
+        kind: Dropdown
+        choices:
+          - name: ospf
+            label: OSPF
+          - name: bgp
+            label: BGP
+          - name: static
+            label: Static
+      - name: as_number
+        kind: Number
+        optional: true
+      - name: networks
+        kind: List
+        optional: true
+      - name: metric
+        kind: Number
+        optional: true
+
+  - name: DeviceType
+    namespace: Jeylan
+    label: "Device Type"
+    include_in_menu: true
+    display_label: "{{ name__value }}"
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+      - name: description
+        kind: Text
+        optional: true
+    relationships:
+      - name: devices
+        peer: JeylanDevice
+        kind: Generic
+        label: "Devices"
+        identifier: "device__devicetype"
+        cardinality: many
+        optional: true
+
+  - name: DeviceRole
+    namespace: Jeylan
+    label: "Device Role"
+    include_in_menu: true
+    display_label: "{{ name__value }}"
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+      - name: description
+        kind: Text
+        optional: true
+      - name: devices_count
+        kind: Number
+        optional: true
+    relationships:
+      - name: devices
+        peer: JeylanDevice
+        kind: Generic
+        label: "Devices"
+        identifier: "device__role"
+        cardinality: many
+        optional: true
