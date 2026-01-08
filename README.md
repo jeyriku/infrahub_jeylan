@@ -64,6 +64,11 @@ Déploiement réussi avec hiérarchie complète :
 ./ipam.py hierarchy subnets    # Créer relations parent-enfant
 ./ipam.py hierarchy ips        # Lier IPs aux subnets
 ./ipam.py hierarchy reset      # Supprimer toutes les relations
+
+# Mise à jour DNS
+./ipam.py update-dns           # Résoudre tous les DNS (FQDN) pour les IPs
+./ipam.py update-dns --workers 50    # Plus de threads pour DNS lookup
+./ipam.py update-dns --verbose       # Afficher toutes les IPs (y compris inchangées)
 ```
 
 ### Aide en ligne
@@ -73,6 +78,7 @@ Déploiement réussi avec hiérarchie complète :
 ./ipam.py status --help             # Aide commande status
 ./ipam.py populate --help           # Aide commande populate
 ./ipam.py hierarchy --help          # Aide commande hierarchy
+./ipam.py update-dns --help         # Aide commande update-dns
 ```
 
 ## 📚 Architecture IPAM
@@ -245,6 +251,50 @@ L'outil supporte les formats Cisco IOS et Juniper JunOS :
 - Extrait les réseaux et les IPs /32 (host routes)
 - Sépare les subnets des host IPs
 - Résolution DNS pour les host IPs
+
+### Résolution DNS (mise à jour des hostnames)
+
+La commande `update-dns` effectue une résolution DNS inverse (reverse lookup) pour toutes les IPs :
+
+```bash
+./ipam.py update-dns
+```
+
+**Fonctionnalités :**
+- Récupère toutes les IPs depuis Infrahub
+- Effectue un reverse DNS lookup (PTR record) pour chaque IP
+- Met à jour l'attribut `hostname` avec le FQDN résolu
+- Parallélisation avec threads (20 workers par défaut, ajustable avec `--workers N`)
+- Affiche uniquement les IPs modifiées par défaut
+- Mode `--verbose` pour voir toutes les IPs y compris inchangées et sans DNS
+
+**Exemple de sortie :**
+```
+🔍 Récupération de toutes les IPs...
+   Trouvé 124 IPs
+
+🔄 Résolution DNS en cours...
+
+   ✅ 192.168.0.64    → jey-c1000-sw-01.int.jeyriku.net
+   ✅ 10.0.0.1        → jey-srx3x-pe-01.int.jeyriku.net
+   ✅ 192.168.0.246   → jeysrv01.int.jeyriku.net
+
+======================================================================
+📊 RAPPORT FINAL
+======================================================================
+   Total IPs analysées:      124
+   ✅ IPs mises à jour:      92
+   ⏭️  IPs inchangées:        0
+   ⚠️  Sans résolution DNS:   32
+======================================================================
+
+✨ 92 hostname(s) mis à jour avec succès!
+```
+
+**Cas d'usage :**
+- Première initialisation des hostnames après peuplement IPAM
+- Mise à jour régulière des hostnames (changements DNS)
+- Audit des IPs sans résolution DNS (mode --verbose)
 
 ## 📊 Maintenance et dépannage
 
