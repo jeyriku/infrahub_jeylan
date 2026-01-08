@@ -15,8 +15,8 @@ if not PASSWORD:
     print("❌ NETWORK_PASSWORD not set")
     sys.exit(1)
 
-# Test avec un seul device
-TEST_DEVICE = "10.0.0.1"  # jey-srx3x-pe-01
+# Test avec un seul device - Changez selon besoin
+TEST_DEVICE = "10.0.0.21"  # jey-isr1k-pe-01 (Cisco)
 
 def test_cisco():
     try:
