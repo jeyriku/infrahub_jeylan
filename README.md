@@ -69,6 +69,15 @@ Déploiement réussi avec hiérarchie complète :
 ./ipam.py update-dns           # Résoudre tous les DNS (FQDN) pour les IPs
 ./ipam.py update-dns --workers 50    # Plus de threads pour DNS lookup
 ./ipam.py update-dns --verbose       # Afficher toutes les IPs (y compris inchangées)
+
+# Liaison IP-Interface
+./ipam.py link-interfaces      # Lier les IPs à leurs interfaces
+./ipam.py link-interfaces --verbose  # Afficher toutes les IPs y compris déjà liées
+
+# Synchronisation SNMP
+./ipam.py snmp-sync            # Synchroniser interfaces via SNMP
+./ipam.py snmp-sync --community jeyricorp  # Avec communauté spécifique
+./ipam.py snmp-sync --verbose  # Afficher tous les détails
 ```
 
 ### Aide en ligne
@@ -79,6 +88,29 @@ Déploiement réussi avec hiérarchie complète :
 ./ipam.py populate --help           # Aide commande populate
 ./ipam.py hierarchy --help          # Aide commande hierarchy
 ./ipam.py update-dns --help         # Aide commande update-dns
+./ipam.py link-interfaces --help    # Aide commande link-interfaces
+./ipam.py snmp-sync --help          # Aide commande snmp-sync
+```
+
+## ⚙️ Configuration SNMP
+
+### Prérequis pour devices Cisco
+
+Pour que la commande `snmp-sync` fonctionne avec les équipements Cisco, l'IP du serveur Infrahub doit être autorisée dans l'ACL SNMP.
+
+**Configuration requise sur chaque device Cisco :**
+
+```cisco
+! Ajouter l'IP du serveur à l'ACL 18
+access-list 18 permit 192.168.0.237
+
+! Vérifier la configuration SNMP
+show snmp community
+show access-lists 18
+```
+
+**Serveur Infrahub :** `jeysrv10` - IP: `192.168.0.237`  
+**Communauté SNMP :** `jeyricorp` (définie dans ipam.py)
 ```
 
 ## 📚 Architecture IPAM
