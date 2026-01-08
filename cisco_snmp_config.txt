@@ -6,20 +6,43 @@
 ! Communauté: jeyricorp
 !
 ! ============================================================================
-! Configuration à appliquer
+! Configuration ACL 18 actuelle
 ! ============================================================================
 
-! 1. Ajouter l'IP du serveur Infrahub à l'ACL SNMP
+! IPs déjà autorisées:
+access-list 18 permit 192.168.0.239
+access-list 18 permit 192.168.0.248
+access-list 18 permit 192.168.0.249
+
+! ============================================================================
+! Configuration à ajouter
+! ============================================================================
+
+! 1. Ajouter l'IP du serveur Infrahub à l'ACL SNMP existante
 access-list 18 permit 192.168.0.237
 
-! 2. Vérifier la configuration actuelle
-show snmp community
+! 2. Vérifier la configuration complète
 show access-lists 18
 
-! 3. Si la communauté n'existe pas encore, la créer
+! Résultat attendu:
+! access-list 18 permit 192.168.0.237
+! access-list 18 permit 192.168.0.239
+! access-list 18 permit 192.168.0.248
+! access-list 18 permit 192.168.0.249
+
+! Résultat attendu:
+! access-list 18 permit 192.168.0.237
+! access-list 18 permit 192.168.0.239
+! access-list 18 permit 192.168.0.248
+! access-list 18 permit 192.168.0.249
+
+! 3. Vérifier la communauté SNMP
+show snmp community
+
+! 4. Si la communauté n'existe pas encore, la créer avec l'ACL 18
 snmp-server community jeyricorp RO 18
 
-! 4. Vérifier que SNMP est activé
+! 5. Vérifier que SNMP est activé
 show snmp
 
 ! ============================================================================
