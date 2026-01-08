@@ -207,7 +207,7 @@ nodes:
   - name: IPAMPrefix
     namespace: Jeylan
     label: "IPAM Prefix (Supernet)"
-    include_in_menu: false
+    include_in_menu: true
     menu_placement: "JeylanIPAM"
     display_label: "{{ prefix__value }} - {{ description__value }}"
     attributes:
@@ -234,7 +234,7 @@ nodes:
   - name: IPAMSubnet
     namespace: Jeylan
     label: "IPAM Subnet"
-    include_in_menu: false
+    include_in_menu: true
     menu_placement: "JeylanIPAM"
     display_label: "{{ subnet__value }} - {{ name__value }}"
     attributes:
@@ -312,7 +312,7 @@ nodes:
   - name: IPAMIPAddress
     namespace: Jeylan
     label: "IPAM IP Address"
-    include_in_menu: false
+    include_in_menu: true
     menu_placement: "JeylanIPAM"
     display_label: "{{ address__value }}"
     attributes:
