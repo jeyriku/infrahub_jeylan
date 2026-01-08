@@ -804,7 +804,18 @@ def create_ip_address(ip_str, device_name, subnet_id, device_id=None):
         print(f"    ℹ IP {ip_str} already exists")
         return False
 
-    desc = f"{device_name} - Management IP"
+    # Determine if IP is in management subnets (10.0.0.0/24 or 10.0.1.0/24)
+    try:
+        ip_obj = ipaddress.ip_address(ip_str)
+        mgmt_subnet_1 = ipaddress.ip_network('10.0.0.0/24')
+        mgmt_subnet_2 = ipaddress.ip_network('10.0.1.0/24')
+
+        if ip_obj in mgmt_subnet_1 or ip_obj in mgmt_subnet_2:
+            desc = f"{device_name} - Management IP"
+        else:
+            desc = f"{device_name}"
+    except ValueError:
+        desc = f"{device_name}"
 
     if device_id:
         mutation = """
