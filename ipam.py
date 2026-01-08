@@ -1292,6 +1292,127 @@ def cmd_hierarchy(args):
         sys.exit(1)
 
 
+def cmd_update_dns(args):
+    """Update DNS hostnames for all IP addresses"""
+    print("🔍 Récupération de toutes les IPs...")
+
+    query = """
+    query {
+        JeylanIPAMIPAddress {
+            edges {
+                node {
+                    id
+                    address {
+                        value
+                    }
+                    hostname {
+                        value
+                    }
+                }
+            }
+        }
+    }
+    """
+
+    result = graphql_query(query)
+    if not result:
+        print("❌ Erreur lors de la récupération des IPs")
+        return
+
+    edges = result.get("JeylanIPAMIPAddress", {}).get("edges", [])
+    print(f"   Trouvé {len(edges)} IPs\n")
+
+    updated_count = 0
+    unchanged_count = 0
+    failed_count = 0
+    no_dns_count = 0
+
+    print("🔄 Résolution DNS en cours...\n")
+
+    workers = args.workers if hasattr(args, 'workers') else 20
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        future_to_ip = {}
+        for edge in edges:
+            node = edge["node"]
+            ip_id = node["id"]
+            ip_address = node["address"]["value"]
+            current_hostname = node.get("hostname", {}).get("value") if node.get("hostname") else None
+
+            future = executor.submit(reverse_dns_lookup, ip_address)
+            future_to_ip[future] = (ip_id, ip_address, current_hostname)
+
+        for future in concurrent.futures.as_completed(future_to_ip):
+            ip_id, ip_address, current_hostname = future_to_ip[future]
+
+            try:
+                new_hostname = future.result()
+
+                if new_hostname is None:
+                    no_dns_count += 1
+                    if args.verbose:
+                        print(f"   ⚠️  {ip_address:15s} - Pas de résolution DNS")
+                    continue
+
+                if current_hostname == new_hostname:
+                    unchanged_count += 1
+                    if args.verbose:
+                        print(f"   ⏭️  {ip_address:15s} - {new_hostname} (inchangé)")
+                    continue
+
+                # Update hostname
+                mutation = """
+                mutation UpdateIPHostname($id: String!, $hostname: String!) {
+                    JeylanIPAMIPAddressUpdate(
+                        data: {
+                            id: $id
+                            hostname: {value: $hostname}
+                        }
+                    ) {
+                        ok
+                        object {
+                            id
+                        }
+                    }
+                }
+                """
+
+                variables = {
+                    "id": ip_id,
+                    "hostname": new_hostname
+                }
+
+                update_result = graphql_query(mutation, variables)
+                if update_result and update_result.get("JeylanIPAMIPAddressUpdate", {}).get("ok"):
+                    updated_count += 1
+                    print(f"   ✅ {ip_address:15s} → {new_hostname}")
+                else:
+                    failed_count += 1
+                    print(f"   ❌ {ip_address:15s} - Erreur de mise à jour")
+
+            except Exception as e:
+                failed_count += 1
+                if args.verbose:
+                    print(f"   ❌ {ip_address:15s} - Erreur: {e}")
+
+    # Rapport final
+    print("\n" + "="*70)
+    print("📊 RAPPORT FINAL")
+    print("="*70)
+    print(f"   Total IPs analysées:      {len(edges)}")
+    print(f"   ✅ IPs mises à jour:      {updated_count}")
+    print(f"   ⏭️  IPs inchangées:        {unchanged_count}")
+    print(f"   ⚠️  Sans résolution DNS:   {no_dns_count}")
+    if failed_count > 0:
+        print(f"   ❌ Erreurs:               {failed_count}")
+    print("="*70)
+
+    if updated_count > 0:
+        print(f"\n✨ {updated_count} hostname(s) mis à jour avec succès!")
+    else:
+        print("\n✨ Aucune mise à jour nécessaire!")
+
+
 # ============================================================================
 # Main CLI
 # ============================================================================
@@ -1331,6 +1452,13 @@ def main():
     hierarchy_subparsers.add_parser('ips', help='Link IPs to subnets')
     hierarchy_subparsers.add_parser('reset', help='Clear all parent relationships')
 
+    # Update DNS command
+    dns_parser = subparsers.add_parser('update-dns', help='Update DNS hostnames for all IPs')
+    dns_parser.add_argument('--workers', type=int, default=20,
+                           help='Number of workers for DNS lookups (default: 20)')
+    dns_parser.add_argument('--verbose', action='store_true',
+                           help='Show all IPs including unchanged ones')
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1347,6 +1475,8 @@ def main():
             cmd_populate(args)
         elif args.command == 'hierarchy':
             cmd_hierarchy(args)
+        elif args.command == 'update-dns':
+            cmd_update_dns(args)
         else:
             parser.print_help()
             sys.exit(1)

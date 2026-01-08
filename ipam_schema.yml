@@ -323,6 +323,10 @@ nodes:
       - name: description
         kind: Text
         optional: true
+      - name: hostname
+        kind: Text
+        optional: true
+        description: "DNS hostname (FQDN from reverse lookup)"
       - name: status
         kind: Text
         optional: true
