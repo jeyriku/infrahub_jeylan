@@ -1628,7 +1628,7 @@ def get_snmp_interfaces(device_ip, community=SNMP_COMMUNITY):
     ipifindex_oid = "1.3.6.1.2.1.4.20.1.2"  # ipAdEntIfIndex
 
     try:
-        # Get interface names
+        # Get interface names (ifName preferred, fallback to ifDescr)
         result = subprocess.run(
             ['snmpwalk', '-v2c', '-c', community, device_ip, ifname_oid],
             capture_output=True,
@@ -1637,7 +1637,6 @@ def get_snmp_interfaces(device_ip, community=SNMP_COMMUNITY):
         )
 
         if result.returncode != 0:
-            # Try fallback to ifDescr
             result = subprocess.run(
                 ['snmpwalk', '-v2c', '-c', community, device_ip, ifdescr_oid],
                 capture_output=True,
@@ -1647,47 +1646,92 @@ def get_snmp_interfaces(device_ip, community=SNMP_COMMUNITY):
 
         if result.returncode == 0:
             for line in result.stdout.splitlines():
-                # Parse: IF-MIB::ifName.1 = STRING: ge-0/0/0
+                # Parse typical: IF-MIB::ifName.1 = STRING: ge-0/0/0
                 match = re.search(r'\.(\d+)\s+=\s+STRING:\s+(.+)', line)
                 if match:
                     ifindex = match.group(1)
                     ifname = match.group(2).strip()
                     interfaces[ifindex] = {'name': ifname, 'ips': []}
 
-        # Get IP addresses
+        # Gather IPv4 addresses from different tables to be exhaustive
+        ip_to_ifindex = {}
+
+        # Primary IPv4 table (widely supported)
         result = subprocess.run(
             ['snmpwalk', '-v2c', '-c', community, device_ip, ipaddr_oid],
             capture_output=True,
             text=True,
             timeout=10
         )
-
         if result.returncode == 0:
-            ip_to_ifindex = {}
             for line in result.stdout.splitlines():
-                # Parse: IP-MIB::ipAdEntAddr.192.168.0.1 = IpAddress: 192.168.0.1
-                match = re.search(r'ipAdEntAddr\.([\d.]+)\s+=\s+IpAddress:\s+([\d.]+)', line)
-                if match:
-                    ip_addr = match.group(2)
-                    ip_to_ifindex[ip_addr] = None
+                m = re.search(r'ipAdEntAddr\.([\d.]+)\s+=\s+IpAddress:\s+([\d.]+)', line)
+                if m:
+                    ip = m.group(2)
+                    ip_to_ifindex[ip] = None
 
-            # Get interface index for each IP
+        # Secondary IPv4 table (IP-MIB::ipAddressTable) — parse any dotted IP occurrences
+        try:
             result = subprocess.run(
-                ['snmpwalk', '-v2c', '-c', community, device_ip, ipifindex_oid],
+                ['snmpwalk', '-v2c', '-c', community, device_ip, 'IP-MIB::ipAddressTable'],
                 capture_output=True,
                 text=True,
                 timeout=10
             )
-
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
-                    # Parse: IP-MIB::ipAdEntIfIndex.192.168.0.1 = INTEGER: 42
-                    match = re.search(r'ipAdEntIfIndex\.([\d.]+)\s+=\s+INTEGER:\s+(\d+)', line)
-                    if match:
-                        ip_addr = match.group(1)
-                        ifindex = match.group(2)
-                        if ip_addr in ip_to_ifindex and ifindex in interfaces:
-                            interfaces[ifindex]['ips'].append(ip_addr)
+                    m = re.search(r'([0-9]{1,3}(?:\.[0-9]{1,3}){3})', line)
+                    if m:
+                        ip = m.group(1)
+                        if ip not in ip_to_ifindex:
+                            ip_to_ifindex[ip] = None
+        except Exception:
+            pass
+
+        # Try to map IP -> ifIndex from any available IfIndex table(s)
+        for oid in [ipifindex_oid, 'IP-MIB::ipAddressIfIndex', 'IP-MIB::ipAdEntIfIndex']:
+            try:
+                result = subprocess.run(
+                    ['snmpwalk', '-v2c', '-c', community, device_ip, oid],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode != 0:
+                    continue
+
+                for line in result.stdout.splitlines():
+                    # look for patterns like ipAdEntIfIndex.192.168.0.1 = INTEGER: 42
+                    m = re.search(r'\.(?P<ip>[0-9]{1,3}(?:\.[0-9]{1,3}){3})\s+=\s+INTEGER:\s+(?P<ifindex>\d+)', line)
+                    if m:
+                        ip = m.group('ip')
+                        ifindex = m.group('ifindex')
+                        ip_to_ifindex[ip] = ifindex
+
+            except subprocess.TimeoutExpired:
+                continue
+
+        # Finally, assign IPs to interfaces map where possible
+        for ip_addr, ifindex in ip_to_ifindex.items():
+            if ifindex and ifindex in interfaces:
+                interfaces[ifindex]['ips'].append(ip_addr)
+            else:
+                # Attempt to match by querying the interface index for that IP directly
+                try:
+                    res = subprocess.run(
+                        ['snmpget', '-v2c', '-c', community, device_ip, f'IP-MIB::ipAdEntIfIndex.{ip_addr}'],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    m = re.search(r'INTEGER:\s+(\d+)', res.stdout)
+                    if m:
+                        ifidx = m.group(1)
+                        if ifidx in interfaces:
+                            interfaces[ifidx]['ips'].append(ip_addr)
+                except Exception:
+                    # best-effort — ignore failures
+                    pass
 
         return interfaces
 
